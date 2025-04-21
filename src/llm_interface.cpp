@@ -49,8 +49,7 @@ std::string LLMInterface::executeCommand(const std::string& command) {
     std::array<char, 256> buffer;
 
     // 使用 popen 执行命令并读取其标准输出
-    // " 2>&1" 可以选择性添加，用于捕获 stderr 到结果中，方便调试
-    unique_pipe_ptr pipe(popen((command + " 2>&1").c_str(), "r"));
+    unique_pipe_ptr pipe(popen((command).c_str(), "r"));
     if (!pipe) {
         throw LLMError("Failed to popen command: " + command);
     }
@@ -58,30 +57,28 @@ std::string LLMInterface::executeCommand(const std::string& command) {
     while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
         result += buffer.data();
     }
-    // pclose is called automatically by unique_ptr's deleter (PopenDeleter)
 
-    // 去除可能的尾部换行符
+    // 去除尾部多余字节
     if (!result.empty() && result.back() == '\n') {
         result.pop_back();
     }
+    result.erase(result.length() - 4, 4);
+    std::cout << "LLM generated query string: " << result << std::endl;
 
     if (result.empty()) {
         std::cerr << "Warning: LLM command returned empty output." << std::endl;
     }
-
     return result;
 }
 
 std::string LLMInterface::generateQuery(const std::string& user_command, const std::string& preferences_info) {
     // 1. 合并用户指令和偏好信息为一个字符串
-    std::string combined_input = system_prompt_ + "用户指令：" + user_command;
+    std::string combined_input = system_prompt_ + user_command;
     if (!preferences_info.empty()) {
         combined_input += " 用户偏好：" + preferences_info;
     }
 
     // 2. 对合并后的字符串进行处理，确保可以安全地作为命令行参数传递
-    //    最重要的是处理引号和特殊字符。一个简单（但不完美）的方法是用双引号包裹。
-    //    需要转义输入字符串中的双引号。
     std::string escaped_input = "";
     escaped_input.reserve(combined_input.length() + 2); // 预留空间
     escaped_input += '"'; // 开头引号
@@ -93,12 +90,11 @@ std::string LLMInterface::generateQuery(const std::string& user_command, const s
     }
     escaped_input += '"'; // 结尾引号
 
-    // 3. 构建完整的命令行
-    //    假设 LLM 程序接受一个参数，该参数就是包含所有信息的字符串
-    std::string full_command = app_path_ + " -m " + model_path_ + " " + escaped_input;
-    std::cout << "Executing LLM command: " << full_command << std::endl; // Debug 输出，小心过长
+    // 3. 构建完整的命令行命令
+    std::string full_command = app_path_ + " " + model_path_ + " " + escaped_input;
+    std::cout << "Executing LLM command: " << full_command << std::endl;
 
-    // 4. 执行命令并获取输出 (LLM生成的“查询”字符串)
+    // 4. 执行
     try {
         return executeCommand(full_command);
     } catch (const std::exception& e) {

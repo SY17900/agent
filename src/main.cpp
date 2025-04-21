@@ -22,20 +22,23 @@ int main(int argc, char* argv[]) {
         }
         std::string prefs_string = prefs.getPreferencesAsString();
 
-        LLMInterface llm(config::LLM_EXECUTABLE_PATH, config::MODEL_PATH);
+# ifdef VERSION_BIG
+        LLMInterface llm(config::LLM_EXECUTABLE_PATH, config::BIG_MODEL_PATH);
+# else
+        LLMInterface llm(config::LLM_EXECUTABLE_PATH, config::SMALL_MODEL_PATH);
+# endif
+        
         std::string query_string;
-        // try {
-        //     query_string = llm.generateQuery(user_command, prefs_string);
-        //     std::cout << "LLM generated query string: " << query_string << std::endl;
-        //     if (query_string.empty()) {
-        //         std::cerr << "LLM did not return a valid query string. Aborting." << std::endl;
-        //         return 1;
-        //     }
-        // } catch (const LLMError& e) {
-        //     std::cerr << "Error interacting with LLM: " << e.what() << std::endl;
-        //     return 1;
-        // }
-        query_string = "猪肉,饺子";
+        try {
+            query_string = llm.generateQuery(user_command, prefs_string);
+            if (query_string.empty()) {
+                std::cerr << "LLM did not return a valid query string. Aborting." << std::endl;
+                return 1;
+            }
+        } catch (const LLMError& e) {
+            std::cerr << "Error interacting with LLM: " << e.what() << std::endl;
+            return 1;
+        }
 
         DBInterface db;
         std::vector<std::vector<std::string>> results;
