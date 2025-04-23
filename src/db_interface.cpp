@@ -26,8 +26,8 @@ void DBInterface::initializeSampleData() {
     };
 }
 
-std::vector<std::vector<std::string>> DBInterface::executeQuery(const std::string& query_string) {
-    std::vector<std::vector<std::string>> results;
+std::vector<std::string> DBInterface::executeQuery(const std::string& query_string) {
+    std::vector<std::string> results;
     std::vector<DbRow> filtered_data = restaurants_;
     std::cout << "[DB]Filtering in-memory restaurant data based on query: \"" << query_string << "\"" << std::endl;
 
@@ -60,7 +60,6 @@ std::vector<std::vector<std::string>> DBInterface::executeQuery(const std::strin
                 bool keyword_found_in_restaurant = false;
                 for (const auto& pair : restaurant) {
                     if (pair.second.find(kw) != std::string::npos) {
-                        std::cout << "[DB]Keyword " << kw << "found in" << pair.second << std::endl;
                         keyword_found_in_restaurant = true;
                         break;
                     }
@@ -76,19 +75,17 @@ std::vector<std::vector<std::string>> DBInterface::executeQuery(const std::strin
         std::cout << "[DB]No keywords provided in the query." << std::endl;
     }
 
-    std::vector<std::string> headers = {"name", "description"};
+    std::vector<std::string> headers = {"name"};
 
     for (const auto& restaurant : filtered_data) {
-        std::vector<std::string> result_row;
         for (const std::string& header : headers) {
             auto it = restaurant.find(header);
             if (it != restaurant.end()) {
-                result_row.push_back(it->second);
+                results.push_back(it->second);
             } else {
-                result_row.push_back("N/A");
+                results.push_back("N/A");
             }
         }
-        results.push_back(result_row);
     }
 
     std::cout << "[DB]Filtering complete. Found " << filtered_data.size() << " matching entries." << std::endl;

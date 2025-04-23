@@ -18,7 +18,7 @@ class DBInterface {
 public:
     DBInterface();
     ~DBInterface() = default;
-    std::vector<std::vector<std::string>> executeQuery(const std::string& query_string);
+    std::vector<std::string> executeQuery(const std::string& query_string);
 
 private:
     DbTable restaurants_;
