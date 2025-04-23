@@ -9,7 +9,7 @@
 
 DBInterface::DBInterface() {
     initializeSampleData();
-    std::cout << "[DB]In-memory restaurant database initialized with " << restaurants_.size() << " entries." << std::endl;
+    std::cout << std::endl << "In-memory restaurant database initialized with " << restaurants_.size() << " entries." << std::endl;
 }
 
 void DBInterface::initializeSampleData() {
@@ -29,7 +29,7 @@ void DBInterface::initializeSampleData() {
 std::vector<std::string> DBInterface::executeQuery(const std::string& query_string) {
     std::vector<std::string> results;
     std::vector<DbRow> filtered_data = restaurants_;
-    std::cout << "[DB]Filtering in-memory restaurant data based on query: \"" << query_string << "\"" << std::endl;
+    std::cout << "Filtering in-memory restaurant data based on query: \"" << query_string << "\"" << std::endl;
 
     std::stringstream ss(query_string);
     std::string keyword;
@@ -72,7 +72,7 @@ std::vector<std::string> DBInterface::executeQuery(const std::string& query_stri
         }
         filtered_data = temp_data;
     } else {
-        std::cout << "[DB]No keywords provided in the query." << std::endl;
+        std::cout << "No keywords provided in the query." << std::endl;
     }
 
     std::vector<std::string> headers = {"name"};
@@ -88,6 +88,6 @@ std::vector<std::string> DBInterface::executeQuery(const std::string& query_stri
         }
     }
 
-    std::cout << "[DB]Filtering complete. Found " << filtered_data.size() << " matching entries." << std::endl;
+    std::cout << "Filtering complete. Found " << filtered_data.size() << " matching entries." << std::endl;
     return results;
 }

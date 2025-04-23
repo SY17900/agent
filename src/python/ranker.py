@@ -11,19 +11,41 @@ RESTAURANTS_FILE = os.path.join(DATA_DIR, "restaurants_info.json")
 USER_PROFILE_FILE = os.path.join(DATA_DIR, "user_profile.json")
 HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 
+DEFAULT_USER_PROFILE = {
+    "sweetness": 0.5,
+    "spiciness": 0.5,
+    "price": 0.5,
+    "distance": 0.5,
+    "rating": 0.5
+}
+
 def load_json_data(filepath: str) -> Any:
-    """从 JSON 文件读取数据"""
-    if not os.path.exists(filepath):
-        print(f"Error: File not found at {filepath}. Please make sure '{DATA_DIR}' directory and '{os.path.basename(filepath)}' exist.")
-        return None
+    """
+    从 JSON 文件读取数据。文件保证存在。
+    如果读取的是 user_profile.json 且内容无效，则设置默认画像并覆盖文件。
+    其他文件的读取逻辑不变。
+    """
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+        return data
     except json.JSONDecodeError:
-        print(f"Error: Could not decode JSON from {filepath}. Please check the file format.")
+        sys.stderr.write(f"\nError: Decoding JSON from {filepath} failed. ")
+        if filepath.endswith('user_profile.json'):
+            sys.stderr.write("Overwriting with default user profile.\n")
+            default_profile = DEFAULT_USER_PROFILE.copy()
+            save_json_data(default_profile, filepath)
+            return default_profile
+        sys.stderr.write("Returning None.\n")
         return None
     except Exception as e:
-        print(f"An error occurred while reading {filepath}: {e}")
+        sys.stderr.write(f"An error occurred while reading {filepath}: {e}. ")
+        if filepath.endswith('user_profile.json'):
+            sys.stderr.write("Overwriting with default user profile.\n")
+            default_profile = DEFAULT_USER_PROFILE.copy()
+            save_json_data(default_profile, filepath)
+            return default_profile
+        sys.stderr.write("Returning None.\n")
         return None
 
 def save_json_data(data: Any, filepath: str):
@@ -47,8 +69,6 @@ def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
         如果任一向量为零向量，返回 0.0。
     """
     if len(vec1) != len(vec2):
-        # 理论上这里不应该发生，因为向量维度固定为5
-        # 但作为健壮性检查，可以加上
         print("Warning: Vector dimensions mismatch.")
         return 0.0
 
@@ -56,11 +76,9 @@ def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
     magnitude_vec1 = math.sqrt(sum(v1 * v1 for v1 in vec1))
     magnitude_vec2 = math.sqrt(sum(v2 * v2 for v2 in vec2))
 
-    # 避免除以零的情况
     if magnitude_vec1 == 0 or magnitude_vec2 == 0:
         return 0.0
     else:
-        # 加上一个极小值避免浮点数误差导致稍大于 1 或小于 -1
         similarity = dot_product / (magnitude_vec1 * magnitude_vec2)
         return max(-1.0, min(1.0, similarity))
     
@@ -86,27 +104,26 @@ def calculate_decay_weight(order_date_str: str) -> float:
         return 0.0
 
 def _perform_ranking(restaurant_names_to_rank: List[str], all_restaurants: List[Dict[str, Any]], user_preference: Dict[str, float]) -> List[Tuple[float, Dict[str, Any]]]:
-     """
-     根据用户画像，计算传入名字列表的餐厅与用户偏好的余弦相似度，并对这些餐厅进行排序。
-     ... (函数内容不变) ...
-     """
-     if not all(key in user_preference for key in ["sweetness", "spiciness", "price", "distance", "rating"]):
-         sys.stderr.write("Error: User profile data is invalid (missing keys).\n")
-         return []
+    """
+    根据用户画像，计算传入名字列表的餐厅与用户偏好的余弦相似度，并对这些餐厅进行排序。
+    ... (函数内容不变) ...
+    """
+    if not all(key in user_preference for key in ["sweetness", "spiciness", "price", "distance", "rating"]):
+        sys.stderr.write("Error: User profile data is invalid (missing keys).\n")
+        return []
 
-     preference_vector = [
+    preference_vector = [
         user_preference.get("sweetness", 0.5),
         user_preference.get("spiciness", 0.5),
         user_preference.get("price", 0.5),
         user_preference.get("distance", 0.5),
         user_preference.get("rating", 0.5)
-     ]
-     # print(f"Loaded user preference vector: {preference_vector}", file=sys.stderr) # 打印到stderr
+    ]
 
-     ranked_restaurants = []
-     names_to_rank_set: Set[str] = set(restaurant_names_to_rank)
+    ranked_restaurants = []
+    names_to_rank_set: Set[str] = set(restaurant_names_to_rank)
 
-     for restaurant in all_restaurants:
+    for restaurant in all_restaurants:
         restaurant_name = restaurant.get("name")
         if restaurant_name and restaurant_name in names_to_rank_set:
             attributes = restaurant.get("attributes")
@@ -124,17 +141,9 @@ def _perform_ranking(restaurant_names_to_rank: List[str], all_restaurants: List[
                 sys.stderr.write(f"Warning: Restaurant '{restaurant_name}' has no 'attributes'. Giving default score 0.\n")
                 ranked_restaurants.append((0.0, restaurant))
 
-     ranked_restaurants.sort(key=lambda x: x[0], reverse=True)
+    ranked_restaurants.sort(key=lambda x: x[0], reverse=True)
 
-     return ranked_restaurants
-
-DEFAULT_USER_PROFILE = {
-    "sweetness": 0.5,
-    "spiciness": 0.5,
-    "price": 0.5,
-    "distance": 0.5,
-    "rating": 0.5
-}
+    return ranked_restaurants
 
 def update_user_profile_from_history(all_restaurants: List[Dict[str, Any]]):
     """
@@ -162,7 +171,6 @@ def update_user_profile_from_history(all_restaurants: List[Dict[str, Any]]):
 
         weight = calculate_decay_weight(order_date_str)
         if weight <= 0:
-             # sys.stderr.write(f"Info: Skipping history record from {order_date_str} due to zero or negative weight.\n") # 避免过多打印
              continue # 权重为0或负数（未来日期）则忽略
 
         # 查找订单对应的餐厅数据
@@ -198,7 +206,7 @@ def update_user_profile_from_history(all_restaurants: List[Dict[str, Any]]):
 
     # 保存重新计算后的用户画像
     save_json_data(new_user_profile, USER_PROFILE_FILE)
-    print(f"\nUser profile recalculated and saved to {USER_PROFILE_FILE}", file=sys.stderr)
+    print(f"User profile recalculated and saved to {USER_PROFILE_FILE}", file=sys.stderr)
 
 if __name__ == "__main__":
     # 这个脚本期望接收一个命令行参数：包含餐厅名字列表的字符串 (逗号分隔)
@@ -270,7 +278,6 @@ if __name__ == "__main__":
 
         # 加载现有历史记录，添加新记录，然后保存
         current_history = load_json_data(HISTORY_FILE)
-        # load_json_data 在文件不存在或格式错误时会返回 []，不需要额外检查
         current_history.append(history_record)
         save_json_data(current_history, HISTORY_FILE)
 
@@ -278,20 +285,9 @@ if __name__ == "__main__":
         print(f"Your order for {selected_restaurant_data.get('name', 'Unknown')} has been recorded in history.")
 
         # 7. 读取history文件，根据记录重新计算并生成用户画像
-        print("\nRecalculating user profile based on order history...")
-        # update_user_profile_from_history 现在只更新5个属性维度
+        print("Recalculating user profile based on order history...")
         update_user_profile_from_history(all_restaurants_data)
 
-
-        # 8. 打印更新后的用户画像并结束程序
-        print("\n--- Updated User Profile ---", file=sys.stderr) # 打印到标准错误，与标准输出的排序结果区分
-        # 重新加载以确认保存成功，load_json_data 保证返回有效画像或默认画像
-        updated_profile = load_json_data(USER_PROFILE_FILE)
-        # 使用json.dump打印到stderr，以便格式化显示
-        json.dump(updated_profile, sys.stderr, ensure_ascii=False, indent=4)
-        sys.stderr.write('\n')
-
-        print("\nProgram finished.")
         sys.exit(0) # 程序正常结束
 
     else:

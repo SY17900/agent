@@ -34,14 +34,14 @@ LLMInterface::LLMInterface(const std::string& llm_executable_path, const std::st
     app_path_(llm_executable_path), model_path_(model_path) {
         std::ifstream file(config::PROMPT_FILE_PATH);
         if (!file.is_open()) {
-            std::cerr << "Error: Could not open preferences file: " << config::PROMPT_FILE_PATH << std::endl;
+            std::cerr << "Error: Could not open prompt file: " << config::PROMPT_FILE_PATH << std::endl;
         }
 
         std::stringstream buffer;
         buffer << file.rdbuf();
         system_prompt_ = buffer.str();
         file.close();
-        std::cout << "Successfully loaded preferences from: " << config::PROMPT_FILE_PATH << std::endl;
+        std::cout << "Successfully loaded prompt from: " << config::PROMPT_FILE_PATH << std::endl;
     }
 
 std::string LLMInterface::executeCommand(const std::string& command) {
@@ -71,12 +71,9 @@ std::string LLMInterface::executeCommand(const std::string& command) {
     return result;
 }
 
-std::string LLMInterface::generateQuery(const std::string& user_command, const std::string& preferences_info) {
+std::string LLMInterface::generateQuery(const std::string& user_command) {
     // 1. 合并用户指令和偏好信息为一个字符串
     std::string combined_input = system_prompt_ + user_command;
-    if (!preferences_info.empty()) {
-        combined_input += " 用户偏好：" + preferences_info;
-    }
 
     // 2. 对合并后的字符串进行处理，确保可以安全地作为命令行参数传递
     std::string escaped_input = "";

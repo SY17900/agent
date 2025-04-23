@@ -12,7 +12,7 @@ public:
 class LLMInterface {
 public:
     LLMInterface(const std::string& llm_executable_path, const std::string& model_path);
-    std::string generateQuery(const std::string& user_command, const std::string& preferences_info);
+    std::string generateQuery(const std::string& user_command);
 
 private:
     std::string app_path_;

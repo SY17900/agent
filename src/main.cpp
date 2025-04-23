@@ -1,13 +1,13 @@
 #include "config.h"
-#include "user_preferences.h"
 #include "llm_interface.h"
 #include "db_interface.h"
 #include <iostream>
 #include <string>
 #include <vector>
 #include <stdexcept>
-#include <cstdlib> // 用于 std::system
-#include <sstream> // 用于构建字符串流
+#include <cstdlib>
+#include <sstream>
+#include <fstream>
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -17,13 +17,17 @@ int main(int argc, char* argv[]) {
     std::string user_command = argv[1];
     std::cout << "Received command: " << user_command << std::endl;
 
-    try {
-        UserPreferences prefs;
-        if (!prefs.loadFromFile(config::PREFERENCES_FILE_PATH)) {
-            std::cerr << "Warning: Could not load user preferences. Proceeding without them." << std::endl;
-        }
-        std::string prefs_string = prefs.getPreferencesAsString();
+    std::ifstream icon_file(config::ICON_FILE_PATH);
 
+    if (icon_file.is_open()) {
+        std::string line;
+        while (std::getline(icon_file, line)) {
+            std::cout << line << std::endl;
+        }
+        icon_file.close();
+    }
+
+    try {
 # ifdef VERSION_BIG
         LLMInterface llm(config::LLM_EXECUTABLE_PATH, config::BIG_MODEL_PATH);
 # else
@@ -31,18 +35,16 @@ int main(int argc, char* argv[]) {
 # endif
         
         std::string query_string;
-        // try {
-        //     query_string = llm.generateQuery(user_command, prefs_string);
-        //     if (query_string.empty()) {
-        //         std::cerr << "LLM did not return a valid query string. Aborting." << std::endl;
-        //         return 1;
-        //     }
-        // } catch (const LLMError& e) {
-        //     std::cerr << "Error interacting with LLM: " << e.what() << std::endl;
-        //     return 1;
-        // }
-
-        query_string = "猪肉,饺子,辣";
+        try {
+            query_string = llm.generateQuery(user_command);
+            if (query_string.empty()) {
+                std::cerr << "LLM did not return a valid query string. Aborting." << std::endl;
+                return 1;
+            }
+        } catch (const LLMError& e) {
+            std::cerr << "Error interacting with LLM: " << e.what() << std::endl;
+            return 1;
+        }
 
         DBInterface db;
         std::vector<std::string> results;
@@ -56,14 +58,6 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // std::cout << "\n--- Query Results ---" << std::endl;
-        // if (results.empty()) {
-        //     std::cout << "(No results found)" << std::endl;
-        // } else {
-        //     for (const auto& name : results) {
-        //         std::cout << name << std::endl;
-        //     }
-        // }
         std::stringstream comma_separated_ss;
         for (size_t i = 0; i < results.size(); ++i) {
             comma_separated_ss << results[i];
@@ -82,7 +76,7 @@ int main(int argc, char* argv[]) {
         int system_return_code = std::system(ranker_command.c_str());
 
         if (system_return_code == 0) {
-            std::cout << "\nPython script executed successfully. Sorted results printed above." << std::endl;
+            std::cout << "\nGoodbye!" << std::endl;
         } else {
             std::cerr << "\nError: Python script execution failed with return code " << system_return_code << std::endl;
         }
