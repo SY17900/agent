@@ -1,250 +1,181 @@
 import json
-import math
+import asyncio
 import os
-import sys
 import datetime
-import numbers
 from typing import List, Dict, Any, Tuple, Set, Optional
+from contextlib import AsyncExitStack
 
-DATA_DIR = "/home/sy/agent/data"
-RESTAURANTS_FILE = os.path.join(DATA_DIR, "restaurants_info.json")
-USER_PROFILE_FILE = os.path.join(DATA_DIR, "user_profile.json")
-HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
+from openai import OpenAI
+from dotenv import load_dotenv
 
-DEFAULT_USER_PROFILE = {
-    "sweetness": 0.5,
-    "spiciness": 0.5,
-    "price": 0.5,
-    "distance": 0.5,
-    "rating": 0.5
-}
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
-def load_json_data(filepath: str) -> Any:
-    """
-    从 JSON 文件读取数据。文件保证存在。
-    如果读取的是 user_profile.json 且内容无效，则设置默认画像并覆盖文件。
-    其他文件的读取逻辑不变。
-    """
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        return data
-    except json.JSONDecodeError:
-        sys.stderr.write(f"\nError: Decoding JSON from {filepath} failed. ")
-        if filepath.endswith('user_profile.json'):
-            sys.stderr.write("Overwriting with default user profile.\n")
-            default_profile = DEFAULT_USER_PROFILE.copy()
-            save_json_data(default_profile, filepath)
-            return default_profile
-        sys.stderr.write("Returning None.\n")
-        return None
-    except Exception as e:
-        sys.stderr.write(f"An error occurred while reading {filepath}: {e}. ")
-        if filepath.endswith('user_profile.json'):
-            sys.stderr.write("Overwriting with default user profile.\n")
-            default_profile = DEFAULT_USER_PROFILE.copy()
-            save_json_data(default_profile, filepath)
-            return default_profile
-        sys.stderr.write("Returning None.\n")
-        return None
+import helper
+import config
 
-def save_json_data(data: Any, filepath: str):
-    """将数据保存到 JSON 文件"""
-    try:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=4) # 使用indent=4格式化输出
-    except Exception as e:
-        sys.stderr.write(f"Error occurred while saving data to {filepath}: {e}\n")
+load_dotenv("/home/sy/agent/data/.env")
 
-def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-    """
-    计算两个向量之间的余弦相似度
+class MCPClient:
+    def __init__(self):
+        self.session: Optional[ClientSession] = None
+        self.exit_stack = AsyncExitStack()
+        self.client = OpenAI()
 
-    Args:
-        vec1: 第一个向量 (List[float])
-        vec2: 第二个向量 (List[float])
+    async def connect_to_server(self):
+        server_params = StdioServerParameters(
+            command='uv',
+            args=['run', '/home/sy/agent/src/python/order_helper.py'],
+            env=None
+        )
 
-    Returns:
-        余弦相似度得分 (float)，范围在 -1.0 到 1.0 之间。
-        如果任一向量为零向量，返回 0.0。
-    """
-    if len(vec1) != len(vec2):
-        print("Warning: Vector dimensions mismatch.")
-        return 0.0
+        stdio_transport = await self.exit_stack.enter_async_context(
+            stdio_client(server_params))
+        stdio, write = stdio_transport
+        self.session = await self.exit_stack.enter_async_context(
+            ClientSession(stdio, write))
 
-    dot_product = sum(v1 * v2 for v1, v2 in zip(vec1, vec2))
-    magnitude_vec1 = math.sqrt(sum(v1 * v1 for v1 in vec1))
-    magnitude_vec2 = math.sqrt(sum(v2 * v2 for v2 in vec2))
+        await self.session.initialize()
 
-    if magnitude_vec1 == 0 or magnitude_vec2 == 0:
-        return 0.0
-    else:
-        similarity = dot_product / (magnitude_vec1 * magnitude_vec2)
-        return max(-1.0, min(1.0, similarity))
+    async def process_query(self, query: str) -> str:
+        system_prompt = (
+            "你是一个非常智能的外卖点单助手，你善于使用精妙但是简洁的语言响应用户的请求"
+            "你可以并且仅可以调用两种外部函数：db_search和similarity_calc来辅助自己的工作"
+            "在所有你认为有必要的时候，都建议你先调用合适的函数，再根据函数的返回结果进行工作"
+            "我们已经根据用户的需求为他筛选出了一条他最有可能感兴趣的餐厅，你可以通过db_search函数得到这家餐厅的信息，\
+                还可以通过similarity_calc函数得到这家餐厅是在哪些维度上与用户的偏好相匹配"
+            "接下来你将得到这家餐厅的名称，然后你将根据上面两个函数的调用结果，为用户生成一则推荐词\
+                需要介绍这家餐厅的信息，并且向用户说明为什么这可能是他最感兴趣的餐厅"
+            "建议你调用两次函数，然后根据两次结果综合生成你的答案。"
+        )
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query}
+        ]
+
+        # 获取mcp服务器工具列表
+        response = await self.session.list_tools()
+        # 生成function call的描述信息
+        available_tools = [{
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.inputSchema
+            }
+        } for tool in response.tools]
+
+        # print(available_tools)
+
+        # 请求 deepseek，function call 的描述信息通过 tools 参数传入
+        response = self.client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL"),
+            messages=messages,
+            tools=available_tools
+        )
+
+        # print(response.choices[0])
+
+        # 处理返回的内容
+        while True:
+            content = response.choices[0]
+            if content.finish_reason == "tool_calls":
+                tool_call0 = content.message.tool_calls[0]
+                tool_name0 = tool_call0.function.name
+                tool_args0 = json.loads(tool_call0.function.arguments)
+
+                tool_call1 = content.message.tool_calls[1]
+                tool_name1 = tool_call1.function.name
+                tool_args1 = json.loads(tool_call1.function.arguments)
+
+                # 执行工具
+                result0 = await self.session.call_tool(tool_name0, tool_args0)
+                print(f"\n\n[Calling tool {tool_name0} with args {tool_args0}]\nresult = {result0}\n\n")
+
+                result1 = await self.session.call_tool(tool_name1, tool_args1)
+                print(f"\n\n[Calling tool {tool_name1} with args {tool_args1}]\nresult = {result1}\n\n")
+
+                # 将deepseek返回的调用哪个工具数据和工具执行完成后的数据都存入messages中
+                messages.append(content.message.model_dump())
+                messages.append({
+                    "role": "tool",
+                    "content": result0.content[0].text,
+                    "tool_call_id": tool_call0.id,
+                })
+                messages.append({
+                    "role": "tool",
+                    "content": result1.content[0].text,
+                    "tool_call_id": tool_call1.id,
+                })
+
+                # 将上面的结果再返回给deepseek用于生产最终的结果
+                response = self.client.chat.completions.create(
+                    model=os.getenv("OPENAI_MODEL"),
+                    messages=messages,
+                )
+            else:
+                return response.choices[0].message.content
+
+    async def cleanup(self):
+        """Clean up resources"""
+        await self.exit_stack.aclose()
     
-DECAY_LAMBDA = 0.05
+# --- Synchronous main function ---
+def main():
+    """Synchronous main function to run the client for a single query."""
+    client = MCPClient()
 
-def calculate_decay_weight(order_date_str: str) -> float:
-    """
-    计算订单日期的指数衰减权重。
-    权重 = exp(-lambda * 距离今天的天数)
-    """
-    try:
-        order_date = datetime.date.fromisoformat(order_date_str)
-        today = datetime.date.today()
-        days_ago = (today - order_date).days
-        days_ago = max(0, days_ago)
-        weight = math.exp(-DECAY_LAMBDA * days_ago)
-        return weight
-    except ValueError:
-        sys.stderr.write(f"Warning: Invalid date format in history: {order_date_str}. Returning weight 0.\n")
-        return 0.0
-    except Exception as e:
-        sys.stderr.write(f"Error calculating decay weight for {order_date_str}: {e}.\n")
-        return 0.0
-
-def _perform_ranking(restaurant_names_to_rank: List[str], all_restaurants: List[Dict[str, Any]], user_preference: Dict[str, float]) -> List[Tuple[float, Dict[str, Any]]]:
-    """
-    根据用户画像，计算传入名字列表的餐厅与用户偏好的余弦相似度，并对这些餐厅进行排序。
-    ... (函数内容不变) ...
-    """
-    if not all(key in user_preference for key in ["sweetness", "spiciness", "price", "distance", "rating"]):
-        sys.stderr.write("Error: User profile data is invalid (missing keys).\n")
-        return []
-
-    preference_vector = [
-        user_preference.get("sweetness", 0.5),
-        user_preference.get("spiciness", 0.5),
-        user_preference.get("price", 0.5),
-        user_preference.get("distance", 0.5),
-        user_preference.get("rating", 0.5)
-    ]
-
-    ranked_restaurants = []
-    names_to_rank_set: Set[str] = set(restaurant_names_to_rank)
-
-    for restaurant in all_restaurants:
-        restaurant_name = restaurant.get("name")
-        if restaurant_name and restaurant_name in names_to_rank_set:
-            attributes = restaurant.get("attributes")
-            if attributes:
-                restaurant_vector = [
-                    attributes.get("sweetness", 0.0),
-                    attributes.get("spiciness", 0.0),
-                    attributes.get("price", 0.0),
-                    attributes.get("distance", 0.0),
-                    attributes.get("rating", 0.0)
-                ]
-                similarity = cosine_similarity(preference_vector, restaurant_vector)
-                ranked_restaurants.append((similarity, restaurant))
-            else:
-                sys.stderr.write(f"Warning: Restaurant '{restaurant_name}' has no 'attributes'. Giving default score 0.\n")
-                ranked_restaurants.append((0.0, restaurant))
-
-    ranked_restaurants.sort(key=lambda x: x[0], reverse=True)
-
-    return ranked_restaurants
-
-def update_user_profile_from_history(all_restaurants: List[Dict[str, Any]]):
-    """
-    从历史记录文件中读取所有记录，根据指数衰减计算权重，重新生成用户画像 (5个属性维度)。
-    并保存更新后的用户画像文件。
-    """
-    history_records = load_json_data(HISTORY_FILE)
-    # load_json_data 已经处理了文件不存在或格式错误的情况，返回 []
-
-    # 找到所有餐厅数据，方便通过名字查找属性
-    restaurant_lookup: Dict[str, Dict[str, Any]] = {r.get("name"): r for r in all_restaurants if r.get("name")}
-
-    # 初始化用于累积加权属性总和和总权重的字典
-    attribute_weighted_sums: Dict[str, float] = {key: 0.0 for key in DEFAULT_USER_PROFILE.keys()}
-    total_weight_sum = 0.0
-
-    # 遍历历史记录，计算加权属性总和和总权重
-    for record in history_records:
-        restaurant_name = record.get("restaurant_name")
-        order_date_str = record.get("order_date")
-
-        if not restaurant_name or not order_date_str:
-            sys.stderr.write(f"Warning: Skipping invalid history record: {record}\n")
-            continue
-
-        weight = calculate_decay_weight(order_date_str)
-        if weight <= 0:
-             continue # 权重为0或负数（未来日期）则忽略
-
-        # 查找订单对应的餐厅数据
-        restaurant_data = restaurant_lookup.get(restaurant_name)
-
-        if restaurant_data:
-            attributes = restaurant_data.get("attributes", {})
-            # 检查attributes是否是字典且包含所有必要键
-            if isinstance(attributes, dict) and all(key in attributes for key in DEFAULT_USER_PROFILE.keys()):
-                # 累积加权属性总和和总权重
-                total_weight_sum += weight
-                for attr_key in DEFAULT_USER_PROFILE.keys():
-                    attr_value = attributes.get(attr_key, 0.0) # 获取餐厅该属性值
-                    attribute_weighted_sums[attr_key] += attr_value * weight
-            else:
-                 sys.stderr.write(f"Warning: Restaurant '{restaurant_name}' data has invalid or missing attributes for profile update. Skipping.\n")
-
-        else:
-            sys.stderr.write(f"Warning: Restaurant '{restaurant_name}' from history not found in restaurant data. Skipping.\n")
-
-
-    # 根据累积结果生成新的用户画像 (计算加权平均)
-    new_user_profile: Dict[str, float] = {}
-    if total_weight_sum > 0:
-        # 如果有有效的历史记录，计算加权平均值作为新的画像得分
-        for attr_key in DEFAULT_USER_PROFILE.keys():
-            new_user_profile[attr_key] = attribute_weighted_sums[attr_key] / total_weight_sum
-    else:
-        # 如果没有有效的历史记录，使用默认画像
-        sys.stderr.write("No valid history records with attributes found. Using default user profile.\n")
-        new_user_profile = DEFAULT_USER_PROFILE.copy() # 使用copy避免修改默认字典
-
-
-    # 保存重新计算后的用户画像
-    save_json_data(new_user_profile, USER_PROFILE_FILE)
-    print(f"User profile recalculated and saved to {USER_PROFILE_FILE}", file=sys.stderr)
-
-if __name__ == "__main__":
-    # 这个脚本期望接收一个命令行参数：包含餐厅名字列表的字符串 (逗号分隔)
-    # 我们假设C++传递的是逗号分隔字符串
+    import sys
     if len(sys.argv) < 2:
         sys.stderr.write("Usage: python your_ranking_script.py <comma_separated_names_string>\n")
         sys.exit(1)
-
-    # 获取命令行参数中的逗号分隔字符串
     comma_separated_names_string = sys.argv[1]
 
-    # 1. 加载所有餐厅数据 (脚本启动时加载一次)
-    all_restaurants_data = load_json_data(RESTAURANTS_FILE)
+    all_restaurants_data = helper.load_json_data(config.RESTAURANTS_FILE)
     if all_restaurants_data is None or not isinstance(all_restaurants_data, list):
         sys.stderr.write("Failed to load valid restaurant data. Exiting.\n")
         sys.exit(1)
 
-    # 2. 加载唯一的用户画像数据 (脚本启动时加载一次)
-    # load_json_data 已经处理了文件不存在或格式不正确的情况，返回 DEFAULT_USER_PROFILE
-    user_profile_data = load_json_data(USER_PROFILE_FILE)
-    # user_profile_data 保证是一个字典且包含5个key，不需要额外检查 None 或类型
+    user_profile_data = helper.load_json_data(config.USER_PROFILE_FILE)
 
-    # 3. 分割字符串为Python列表
     restaurant_names_to_rank: List[str] = []
-    if comma_separated_names_string: # 避免分割空字符串得到 ['']
-         restaurant_names_to_rank = comma_separated_names_string.split(',')
+    if comma_separated_names_string:
+        restaurant_names_to_rank = comma_separated_names_string.split(',')
 
-    # 4. 执行排序逻辑
-    # ranked_results 是一个 (相似度得分, 餐厅字典) 元组的列表
-    ranked_results = _perform_ranking(restaurant_names_to_rank, all_restaurants_data, user_profile_data)
+    ranked_results = helper.perform_ranking(restaurant_names_to_rank, all_restaurants_data, user_profile_data)
 
-    # 5. 打印排序结果并进行交互式选择
+    # Define an async function to run the core async logic
+    async def run_single_query() -> str:
+        try:
+            # Connect to the server
+            await client.connect_to_server()
+            query = ranked_results[0][1].get("name")
+            return await client.process_query(query)
+
+        except Exception as e:
+            import traceback
+            print("\nAn unexpected error occurred:")
+            traceback.print_exc()
+        finally:
+            # Ensure cleanup happens
+            await client.cleanup()
+
+    # Run the async function using asyncio.run()
+    try:
+        response = asyncio.run(run_single_query())
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user.")
+
     selected_restaurant_data: Optional[Dict[str, Any]] = None # 使用Optional类型提示
+    
     if ranked_results:
         print("\n--- Ranked Restaurants ---")
         for i, (score, restaurant) in enumerate(ranked_results):
             # 显示序号、餐厅名字和相似度得分
             print(f"{i+1}. {restaurant.get('name', 'Unknown')} (Similarity: {score:.4f})")
+
+        print(response)
 
         # 交互式选择
         while selected_restaurant_data is None:
@@ -267,7 +198,7 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"An unexpected error occurred during selection: {e}")
                 sys.exit(1) # 选择过程中发生未知错误
-
+        
         # 6. 将点单记录写入历史文件
         order_date = datetime.date.today().isoformat()
 
@@ -277,16 +208,16 @@ if __name__ == "__main__":
         }
 
         # 加载现有历史记录，添加新记录，然后保存
-        current_history = load_json_data(HISTORY_FILE)
+        current_history = helper.load_json_data(config.HISTORY_FILE)
         current_history.append(history_record)
-        save_json_data(current_history, HISTORY_FILE)
+        helper.save_json_data(current_history, config.HISTORY_FILE)
 
         print("\nOrder placed successfully!")
         print(f"Your order for {selected_restaurant_data.get('name', 'Unknown')} has been recorded in history.")
 
         # 7. 读取history文件，根据记录重新计算并生成用户画像
         print("Recalculating user profile based on order history...")
-        update_user_profile_from_history(all_restaurants_data)
+        helper.update_user_profile_from_history(all_restaurants_data)
 
         sys.exit(0) # 程序正常结束
 
@@ -295,6 +226,9 @@ if __name__ == "__main__":
         print("\nNo restaurants found matching your criteria.")
         # 尽管没有点餐，仍然可以根据历史记录更新画像（基于可能存在的历史记录）
         print("\nAttempting to update user profile from existing history...")
-        update_user_profile_from_history(all_restaurants_data)
+        helper.update_user_profile_from_history(all_restaurants_data)
         print("\nProgram finished.")
         sys.exit(0)
+
+if __name__ == "__main__":
+    main()
