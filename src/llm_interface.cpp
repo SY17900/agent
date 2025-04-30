@@ -8,13 +8,12 @@
 #include <array>
 #include <string>
 
-// Helper struct for popen/pclose RAII
+// 实现 popen/pclose RAII
 struct PopenDeleter {
     void operator()(FILE* pipe) const {
         if (pipe) {
-            // pclose returns the exit status of the command
+            // pclose 返回执行命令的exit status
             int status = pclose(pipe);
-            // Optionally check status here, e.g., WEXITSTATUS(status)
             if (status == -1) {
                 std::cerr << "Warning: pclose failed." << std::endl;
             } else if (WIFEXITED(status)) {
