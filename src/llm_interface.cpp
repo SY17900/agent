@@ -31,17 +31,17 @@ using unique_pipe_ptr = std::unique_ptr<FILE, PopenDeleter>;
 
 LLMInterface::LLMInterface(const std::string& llm_executable_path, const std::string& model_path): 
     app_path_(llm_executable_path), model_path_(model_path) {
-        std::ifstream file(config::PROMPT_FILE_PATH);
-        if (!file.is_open()) {
-            std::cerr << "Error: Could not open prompt file: " << config::PROMPT_FILE_PATH << std::endl;
-        }
-
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        system_prompt_ = buffer.str();
-        file.close();
-        std::cout << "Successfully loaded prompt from: " << config::PROMPT_FILE_PATH << std::endl;
+    std::ifstream file(config::PROMPT_FILE_PATH);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open prompt file: " << config::PROMPT_FILE_PATH << std::endl;
     }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    system_prompt_ = buffer.str();
+    file.close();
+    std::cout << "Successfully loaded prompt from: " << config::PROMPT_FILE_PATH << std::endl;
+}
 
 std::string LLMInterface::executeCommand(const std::string& command) {
     std::string result = "";
